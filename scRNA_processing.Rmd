@@ -1,0 +1,144 @@
+---
+title: "scRNA_processing"
+author: "Priyanka Venkatesh"
+date: "2024-01-17"
+output: 
+  html_document: 
+    toc: true
+    number_sections: true
+---
+
+This markdown file will cover the processing of scRNA-seq data starting from the raw count matrix until obtaining clusters and cluster markers
+
+# *Loading required packages* 
+The following packages are to be loaded after installation
+
+
+```{r}
+library(Seurat)
+library(SeuratObject)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+library(Matrix)
+library(matrixStats)
+library(readr)
+library(tidyr)
+library(grid)
+library(gridExtra)
+library(readxl)
+library(fpc)
+```
+
+
+# *Loading the data*
+This would involve two steps. The first would involve loading the matric and then we create the Seurat object.
+Note: The current example is for loading a matrix in the .mtx format
+Note: change working directory and data accordingly
+
+```{r}
+setwd("/Users/priyankavenkatesh/Desktop/scRNA_GBM/Xie_Y/R1_N")
+mtx <- ReadMtx(mtx = "matrix.mtx.gz", 
+               features = "genes.tsv.gz",
+               cells = "barcodes.tsv.gz",
+               feature.column = 2)
+obj <- CreateSeuratObject(counts = mtx, project = "GSE162631_R1_N", min.features = 200)
+obj
+```
+
+# *Preprocessing*
+Non-viable cells can be removed by calculating the mitochondrial (MT) content per cell and removing cells with MT content > 10%
+
+```{r}
+obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+obj <- subset(obj, subset = percent.mt < 10)
+obj
+```
+
+# *Data normalization*
+Data normalization is performed to ensure uniformity in gene expression values and to account for factors that prevent direct comparison of measures. Additionally highly variable features later to be used for dimensional reduction can also be identified using the `FindVariableFeatures()` function
+
+```{r}
+obj <- NormalizeData(obj)
+genes <- rownames(obj)
+obj <- FindVariableFeatures(obj, selection.method = "vst", nfeatures = 0.1*length(genes))
+var_feats <- VariableFeatures(obj)
+```
+
+# *Cell cycle correction and data scaling* 
+To remove noise accounted by cell cycle genes
+
+```{r}
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+obj <- CellCycleScoring(obj, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+obj <- ScaleData(obj,features = genes, vars.to.regress = c("S.Score", "G2M.Score"))
+```
+
+# *Dimensionality reduction* 
+To perform linear dimensional reduction in the form of Principal component analysis (PCA) and select components which cover maximum information
+
+```{r}
+obj <- RunPCA(obj, npcs = 50, ndims.print = 1:10, features = var_feats, rev.pca = F, weight.by.var = T)
+jpeg("pca.jpg", width = 500, height = 500)
+DimPlot(obj, reduction = "pca")
+dev.off() 
+```
+## Selecting number of components 
+
+```{r}
+stdev <- obj@reductions$pca@stdev
+pct <- (stdev/sum(stdev)) *100
+cumu <- cumsum(pct)
+co1 <- which(cumu > 75 & pct < 5) [1]
+co2 <- sort(which((pct[1:length(pct) - 1] - pct[2:length(pct)]) > 0.1), decreasing = T)[1] + 1
+pcs <- min(co1, co2)
+pcs <- co1
+plot_df <- data.frame(pct = pct, 
+                      cumu = cumu, 
+                      rank = 1:length(pct))
+
+#Plot
+jpeg("elbowplot.jpg", width = 500, height = 500)
+ggplot(plot_df, aes(cumu, pct, label = rank, color = rank > pcs)) + 
+  geom_text() + 
+  geom_vline(xintercept = 90, color = "grey") + 
+  geom_hline(yintercept = min(pct[pct > 5]), color = "grey") +
+  theme_bw()
+dev.off() 
+```
+
+# *Clustering*
+We now create the SNN map which will be used for clustering of all cells. We will be using the cosine metric to create it with a resolution of 1.
+
+```{r}
+obj<- FindNeighbors(obj,dims = 1:pcs, annoy.metric = "cosine")
+obj <- FindClusters(obj, resolution = 1, graph.name = "RNA_snn")
+```
+
+# *Identifying differentially expressed genes* 
+We identify the DEGs for every cluster using the `FindAllMarkers()` function by employing the Wilcoxon ranking test. In the process we will also save the dataset for further downstream processing and 
+
+```{r}
+cluster_markers <- FindAllMarkers(obj, logfc.threshold = 0.25, test.use = "wilcox", only.pos = TRUE, verbose = TRUE)
+write.csv(cluster_markers, "cluster_markers.csv")
+```
+
+# *Non-linear dimensionality reduction*
+For visualization we run the Uniform Manifold Approximation and projection (UMAP) 
+
+```{r}
+obj <- RunUMAP(obj, dims = 1:pcs)
+jpeg("UMAP.jpg", width = 500, height = 500)
+DimPlot(obj, reduction = "umap", label = TRUE)
+dev.off()
+saveRDS(obj, "clustered_obj.rds")
+```
+
+
+# Session info....
+```{r}
+sessionInfo()
+```
+
