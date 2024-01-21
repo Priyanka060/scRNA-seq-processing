@@ -38,12 +38,12 @@ Note: The current example is for loading a matrix in the .mtx format
 Note: change working directory and data accordingly
 
 ```{r}
-setwd("/Users/priyankavenkatesh/Desktop/scRNA_GBM/Xie_Y/R1_N")
+setwd("/path/to/input/files")
 mtx <- ReadMtx(mtx = "matrix.mtx.gz", 
                features = "genes.tsv.gz",
                cells = "barcodes.tsv.gz",
-               feature.column = 2)
-obj <- CreateSeuratObject(counts = mtx, project = "GSE162631_R1_N", min.features = 200)
+               feature.column = 1) # change accordingly
+obj <- CreateSeuratObject(counts = mtx, project = "project", min.features = 200)
 obj
 ```
 
